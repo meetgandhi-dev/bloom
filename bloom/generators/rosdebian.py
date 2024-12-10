@@ -152,10 +152,10 @@ def rosify_package_name(name, rosdistro):
     return 'ros-{0}-{1}'.format(rosdistro, name)
 
 
-def get_subs(pkg, os_name, os_version, ros_distro, deb_inc, native):
+def get_subs(package, os_name, os_version, ros_distro, deb_inc, native):
     # No fallback_resolver provided because peer packages not considered.
     subs = generate_substitutions_from_package(
-        pkg,
+        package,
         os_name,
         os_version,
         ros_distro,
@@ -164,6 +164,52 @@ def get_subs(pkg, os_name, os_version, ros_distro, deb_inc, native):
         native=native
     )
     subs['Package'] = rosify_package_name(subs['Package'], ros_distro)
+    # Refer above get_subs
+    subs['Rosdistro'] = ros_distro
+
+    # ROS 2 specific bloom extensions.
+    ros2_distros = [
+        name for name, values in get_index().distributions.items()
+        if values.get('distribution_type') == 'ros2']
+    if ros_distro in ros2_distros:
+        # Add ros-workspace package as a dependency to any package other
+        # than ros_workspace and its dependencies.
+        if package.name not in ['ament_cmake_core', 'ament_package', 'ros_workspace']:
+            workspace_pkg_name = rosify_package_name('ros-workspace', ros_distro)
+            subs['BuildDepends'].append(workspace_pkg_name)
+            subs['Depends'].append(workspace_pkg_name)
+
+        # Add packages necessary to build vendor typesupport for rosidl_interface_packages to their
+        # build dependencies.
+        if ros_distro in ros2_distros and \
+                ros_distro not in ('r2b2', 'r2b3', 'ardent') and \
+                'rosidl_interface_packages' in [p.name for p in package.member_of_groups]:
+            ROS2_VENDOR_TYPESUPPORT_DEPENDENCIES = [
+                'rosidl-typesupport-fastrtps-c',
+                'rosidl-typesupport-fastrtps-cpp',
+            ]
+
+            # Connext was changed to a new rmw that doesn't require typesupport after Foxy
+            if ros_distro in ('bouncy', 'crystal', 'dashing', 'eloquent', 'foxy'):
+                ROS2_VENDOR_TYPESUPPORT_DEPENDENCIES.extend([
+                    'rosidl-typesupport-connext-c',
+                    'rosidl-typesupport-connext-cpp',
+                ])
+
+            # OpenSplice was dropped after Eloquent.
+            # rmw implementations are required as dependencies up to Eloquent.
+            if ros_distro in ('bouncy', 'crystal', 'dashing', 'eloquent'):
+                ROS2_VENDOR_TYPESUPPORT_DEPENDENCIES.extend([
+                    'rmw-connext-cpp',
+                    'rmw-fastrtps-cpp',
+                    'rmw-implementation',
+                    'rmw-opensplice-cpp',
+                    'rosidl-typesupport-opensplice-c',
+                    'rosidl-typesupport-opensplice-cpp',
+                ])
+
+            subs['BuildDepends'] += [
+                rosify_package_name(name, ros_distro) for name in ROS2_VENDOR_TYPESUPPORT_DEPENDENCIES]
     return subs
 
 
